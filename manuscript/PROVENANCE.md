@@ -2,7 +2,7 @@
 
 ## Single-cell (Fig. 2C–D, S3)
 
-`~/Desktop/Lattice BioFlow/screye/results_cellbender_presupport/`
+`~/Desktop/Lattice BioFlow/screye/results_cellbender/`
 
 | Claim | File |
 |---|---|
@@ -67,7 +67,7 @@ declared in the config and settable on the standalone CLI via
 Criterion 4 now reads **pass**, and the notes paragraph reads APPLIED.
 
 Panels and tables were regenerated on 2026-08-20 from
-`results_cellbender_presupport/ocular/ocular.h5ad`.
+`results_cellbender/ocular/ocular.h5ad`.
 
 ## 2. RESOLVED — the two FAIL verdicts now carry their reasoning
 
@@ -105,9 +105,20 @@ excluded. The draft says so explicitly. If fish can be recovered from acquisitio
 metadata or lab notes, a mixed model with fish as a random effect would
 strengthen Fig. 6 considerably.
 
-## 5. Figures predate the mixed-cluster check
+## 5. RESOLVED — figures carry the mixed-cluster flags
 
-Fig. 2D includes a `lens_fibre (low confidence)` row that the homogeneity check
-added on 2026-08-20 would flag as a mixture. RPE clusters score 92–98% support,
-so the RPE result is unaffected, but regenerating would make panels and code
-agree.
+The pipeline was re-run on 2026-08-20 with the homogeneity check active. Nothing
+about the analysis moved: 100% of cells stayed in the same Leiden cluster,
+107,444 cells and 34 clusters as before, identical compartment split, and every
+relabelling was `X` to `X (mixed)`. The acceptance-criteria table and detection
+fractions are byte-identical to the previous run.
+
+The RPE cluster is unflagged (92-98% support) and unchanged at 409 cells, so
+Fig. 2C and 2D are unaffected. `results_cellbender_presupport/` was kept only
+long enough to prove that and has been removed.
+
+One finding came out of the re-run and is worth carrying into the Methods: the
+whole-head cell-type labels are scored against the *ocular* panel, and 16 of 34
+of those clusters fall below 50% support, against 4 of 34 for the compartment
+panel on identical clusters. Fine cell types are only meaningful within a
+compartment; the trustworthy whole-head annotation is the compartment label.

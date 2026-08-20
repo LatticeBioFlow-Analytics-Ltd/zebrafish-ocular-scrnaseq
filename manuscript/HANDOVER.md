@@ -10,7 +10,7 @@ Read this before using `scrnaseq_section.md`.
 
 Everything in the Methods, the Results, and the first and last paragraphs of the
 Discussion derives from the reanalysis in this repository. Numbers trace to
-`results_cellbender_presupport/` and to `article/figS3_acceptance_criteria.csv`.
+`results_cellbender/` and to `article/figS3_acceptance_criteria.csv`.
 
 ## Written as placeholders
 
@@ -66,7 +66,7 @@ agree.
 ## Figures as they stand
 
 Publication-ready, from the ambient-corrected run, in
-`results_cellbender_presupport/article/figures/` as PDF, SVG and PNG:
+`results_cellbender/article/figures/` as PDF, SVG and PNG:
 
 | Panel | File |
 |---|---|
