@@ -29,7 +29,8 @@ Then, from the repository root:
 
 ```bash
 pixi run run -- --dry-run    # validate config and inputs, print the plan, run nothing
-pixi run run                 # full pipeline on the real data (~35 min, see below)
+pixi run run                 # uncorrected aggregates, superseded (see below)
+pixi run run-cellbender      # the current analysis: 22 corrected libraries (~55 min)
 pixi run -e dev test         # unit tests, no data required (~4 s)
 pixi run -e dev integration  # full pipeline + notebook on synthetic data (~2 min)
 pixi run -e dev check        # lint + unit tests
@@ -58,10 +59,16 @@ keeps them out of iCloud's reach (and out of your iCloud quota).
 Everything else is driven by `config/config.yaml`. No threshold, path or seed
 appears anywhere in the source.
 
-<!-- 35 min measured 2026-08-12 on an Apple-silicon MacBook (16 GB), 53k cells
-     in, t-SNE on ~50k cells is the dominant cost. Re-measure after any change
-     to the embedding stage - a reviewer told "~3 min" who then waits 40 stops
-     trusting the rest. -->
+<!-- 55 min measured 2026-08-20 on a MacBook Pro (Intel Core i9-9880H, 16 GB):
+     208k barcodes in, 107k analysed, 22 libraries. t-SNE and the Wilcoxon DE
+     are the dominant costs. The same run took 1 h 51 m earlier the same day
+     under heavy load, so treat this as a floor rather than a promise.
+
+     An earlier note here said 35 min on "an Apple-silicon MacBook" with 53k
+     cells in. Both were wrong: the machine is Intel (uname -m reports x86_64),
+     and the 53k figure predates per-library counting. Re-measure after any
+     change to the embedding stage - a reviewer told "~3 min" who then waits 40
+     stops trusting the rest. -->
 
 ## How it fits together
 
@@ -141,21 +148,40 @@ cells only (2D), and the S3 set — cluster markers, cells per cluster per
 stage, RPE vs non-RPE detection fractions — plus `figS3_acceptance_criteria.csv`,
 an auto-evaluated version of the control workbook's criteria, and (with
 `--xlsx`) a filled copy of that workbook. The gene panel and its tiers live in
-`config/article_panel.yaml`, transcribed from the workbook; two criteria
-(ambient-RNA correction, second-atlas replication) need external inputs and
-are recorded as pending in `figS3_notes.txt`.
+`config/article_panel.yaml`, transcribed from the workbook.
+
+Of the two criteria once recorded as pending in `figS3_notes.txt`, **ambient-RNA
+correction is now satisfied** — the upstream workflow runs CellBender per library
+and `config/config_cellbender.yaml` consumes it, so panels built from
+`results_cellbender/` rest on corrected counts. Second-atlas replication remains
+outstanding.
+
+Two cautions specific to these panels. The RPE cluster is small (246 cells at
+5 dpf, 163 at 8 dpf after correction), and one 8 dpf library contributes 32% of
+that stage's RPE cells — so a pooled per-stage statistic is disproportionately
+one library, and per-library reporting is the honest form. And check the
+`support` column for the RPE sub-cluster before trusting a stage comparison: a
+mixed cluster carries a single confident label for cells that are not one
+population.
 
 ## Data layout
 
 ```
 data/
-  day5_filtered_feature_bc_matrix.h5
-  day8_filtered_feature_bc_matrix.h5
+  cellbender/
+    zBr5dpf1_S7_cellbender_filtered.h5     22 files: the analysis input,
+    ...                                    ambient-corrected, one per library
+  day5_filtered_feature_bc_matrix.h5       superseded: uncorrected aggregates,
+  day8_filtered_feature_bc_matrix.h5       kept only for comparison
 ```
 
-The mapping from filename to sample name and timepoint is explicit in
-`config/config.yaml` rather than parsed from the filename, so renaming a file
-cannot silently relabel a condition.
+Neither is tracked by git — 383 MB of third-party sequencing output, rebuildable
+from public accessions by the upstream workflow. See `DATA.md`.
+
+The mapping from file to sample name and timepoint is never parsed from a
+filename, so renaming a file cannot silently relabel a condition. For the
+aggregates it is written out in `config/config.yaml`; for the 22 libraries it is
+read from `config/libraries.tsv`, which is the upstream workflow's own sheet.
 
 ### Consuming the `scRNA_analysis` Snakemake workflow
 
@@ -243,11 +269,13 @@ marked and stated in the legend.
 
 ## Design decisions
 
-**Batch correction is off by default.** The two samples *are* the two
-developmental stages, so `sample` and `timepoint` are the same variable.
-Correcting on `sample` would remove exactly the signal the experiment measures.
-The option exists (`cluster.batch_correct`) for a genuine technical batch, and
-logs a warning when used. `cluster_composition_by_sample.png` makes the
+**Batch correction is off by default**, though the reason changed on 2026-08-20.
+With the two aggregates, `sample` and `timepoint` were the same two-level
+variable and correcting on one would have erased the other — it was not a choice.
+With 22 per-library matrices (9 at 5 dpf, 13 at 8 dpf) they are separable, so
+integration is now a legitimate option that is simply not yet justified. Decide
+it from the evidence rather than by default. The option
+(`cluster.batch_correct`) logs a warning when used. `cluster_composition_by_sample.png` makes the
 alternative reading checkable: a cluster drawn overwhelmingly from one library is
 either stage-specific biology or an uncorrected artefact, and those need telling
 apart before any label is trusted.
@@ -288,10 +316,35 @@ be justified against the data rather than asserted.
 
 **Annotation is auditable, not assertive.** Each cluster is scored against every
 marker set and labelled by its top-scoring set, but the full score matrix is
-written out, and any cluster whose top two scores differ by less than 0.05 is
-labelled `(low confidence)`. A cluster scoring nearly equally for two types is
-one the panel cannot resolve; saying so is more useful than a confident wrong
+written out, and two independent checks are recorded beside it.
+
+*Margin* is the gap between the best and second-best score. Below 0.05 the label
+is suffixed `(low confidence)`: a cluster scoring nearly equally for two types is
+one the panel cannot resolve, and saying so is more useful than a confident wrong
 label.
+
+*Support* is the fraction of a cluster's cells that individually score highest
+for the label the cluster was given. Below `compartment.min_support` (0.5) the
+label is suffixed `(mixed)`.
+
+The second check exists because the first cannot see within-cluster composition
+at all. Labels come from the cluster *mean*, so a cluster holding two distinct
+populations can score one of them decisively. On the uncorrected GSE158142
+ocular subset, a cluster of 853 cells held 335 cone photoreceptors and 129 lens
+fibre cells and was labelled `lens_fibre` on a margin of 0.152 — three times the
+threshold — because lens crystallins are 35–40% of a lens cell's UMIs and lift
+the mean on their own. The cones carried 0.14% crystallin. Support for that
+cluster is 35%; nothing else in the outputs would have told you.
+
+`(mixed)` takes precedence over `(low confidence)`, because they call for
+different responses: a narrow margin wants a better panel, a mixture wants
+re-clustering.
+
+Read low support as *look here*, not *this label is wrong*. Sibling panels split
+a vote — `cone_photoreceptor` against `cone_red_green` — and developmental
+continua do the same, so a biologically homogeneous cluster can score low.
+Checking which labels the dissenting cells prefer separates that from a genuine
+mixture.
 
 **The marker panel includes non-retinal populations** — lens, cornea, periocular
 mesenchyme, erythrocytes, skeletal muscle. A whole-eye dissociation is not a
@@ -305,14 +358,34 @@ and neither supports any claim here beyond visual inspection.
 
 ## Limitations
 
-- `config/markers.yaml` is a literature-assembled starting point, not a validated
-  reference. Every symbol should be checked against ZFIN and against the
-  Daniocell atlas (Sur et al., 2023) at the matched stage.
-- Ambient RNA is not corrected. For whole-eye dissociations, CellBender or SoupX
-  would be the next addition and would likely reduce apparent photoreceptor
-  transcript expression in non-photoreceptor clusters.
-- Marker-based labelling is coarse. Reference mapping onto Daniocell with scVI or
-  `sc.tl.ingest` would resolve closely related interneuron subtypes better, at
-  the cost of inheriting that atlas's own annotation errors.
-- One library per timepoint means no biological replication: compositional
-  differences between stages are descriptive, not tested.
+- `config/markers_ocular.yaml` and `config/markers_compartment.yaml` are
+  literature-assembled starting points, not validated references. Every symbol
+  should be checked against ZFIN and against the Daniocell atlas (Sur et al.,
+  2023) at the matched stage.
+- Marker-based labelling is coarse, and the `support` column now says by how
+  much: on the GSE158142 ocular subset, 4 of 18 sub-clusters fall below 50%
+  internal support. Reference mapping onto Daniocell with scVI or
+  `sc.tl.ingest` would resolve closely related subtypes better, at the cost of
+  inheriting that atlas's own annotation errors.
+- Doublet removal is partial by necessity, not by choice. Scrublet's automatic
+  threshold is unusable on data this shallow (see above), and at the explicit
+  threshold the sensitivity is ~12–16%: the cells removed are the detectable
+  minority. Roughly five-sixths of the expected doublets remain, indistinguishable
+  from genuine intermediate states. No threshold fixes that.
+- Dissociation bias is inherited from the source experiment and cannot be
+  corrected here.
+
+Two limitations that stood until 2026-08-20 and no longer do, recorded because
+figures generated before then still carry them:
+
+- ~~Ambient RNA is not corrected.~~ CellBender now runs per library upstream.
+  The prediction attached to this entry — that correction "would likely reduce
+  apparent photoreceptor transcript expression in non-photoreceptor clusters" —
+  was right about the mechanism and wrong about the tissue: it is lens
+  crystallins that dominate the soup here. Correction cut `lens_fibre` calls to
+  0.32x while cone calls doubled.
+- ~~One library per timepoint means no biological replication.~~ Per-library
+  counting gives 9 libraries at 5 dpf and 13 at 8 dpf, so compositional
+  differences between stages can now be tested rather than only described. Worth
+  doing per library rather than pooled: one 8 dpf library contributes 32% of that
+  stage's RPE cells.

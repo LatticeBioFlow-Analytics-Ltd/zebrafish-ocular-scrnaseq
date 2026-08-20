@@ -37,14 +37,35 @@ the algorithm. Aggregating per run instead inflates the cell count roughly 2.75�
 — so these files carry substantially fewer, and more accurate, cells than an
 earlier per-run aggregation of the same reads.
 
-| Sample | Timepoint | File | Libraries | SRA runs | Cells | Size |
-|---|---|---|---|---|---|---|
-| day5 | 5 dpf | `data/day5_filtered_feature_bc_matrix.h5` | 9 | 60 | 51,231 | 66 MB |
-| day8 | 8 dpf | `data/day8_filtered_feature_bc_matrix.h5` | 13 | 76 | 51,348 | 59 MB |
+`data/` holds two tiers. **The per-library CellBender matrices are the analysis
+input**; the aggregates are kept for comparison and are superseded.
 
-Both are Cell Ranger `filtered_feature_bc_matrix.h5` outputs — barcodes already
-called as cells by EmptyDrops, not raw droplets. Cell counts are the sum of the
-per-library Cell Ranger calls.
+| Tier | Files | Path | Barcodes | Size |
+|---|---|---|---|---|
+| **Ambient-corrected, per library** | 22 | `data/cellbender/<library>_cellbender_filtered.h5` | 208,308 | 245 MB |
+| Uncorrected, per timepoint | 2 | `data/day5_…h5`, `data/day8_…h5` | 102,579 | 130 MB |
+
+The aggregates:
+
+| Sample | Timepoint | Libraries | SRA runs | Cells | Size |
+|---|---|---|---|---|---|
+| day5 | 5 dpf | 9 | 60 | 51,231 | 66 MB |
+| day8 | 8 dpf | 13 | 76 | 51,348 | 59 MB |
+
+Both tiers hold barcodes already called as cells, not raw droplets — by
+EmptyDrops for the aggregates, by CellBender's own cell calling for the
+per-library files. That is why the barcode counts differ by roughly 2x:
+CellBender recovers low-count barcodes EmptyDrops rejects. Most are removed
+again by a 200-gene minimum, so the analysed population is about 10% larger, not
+twice the size. Comparing pre-QC CellBender against post-QC Cell Ranger will
+alarm you for no reason.
+
+**`data/` is not tracked by git.** It is 383 MB of third-party sequencing output,
+and this repository's position is that these data should be obtained from the
+archive rather than redistributed here. The inputs are fully specified without
+shipping them: the upstream workflow rebuilds every matrix from public SRA
+accessions, `config/libraries.tsv` names each library and its timepoint, and each
+run manifest records the SHA-256 of every file that produced it.
 
 ## Processing
 
@@ -69,17 +90,27 @@ Per-library quality across all 22 libraries:
 
 ## Known caveats
 
-- **Ambient RNA is not corrected in these files.** Fraction of reads in cells is
-  ~0.51 at 5 dpf but ~0.39 at 8 dpf and the ranges do not overlap, so
-  contamination differs *systematically between timepoints*. Uncorrected, genes
-  abundant in the 8 dpf ambient pool appear mildly elevated in every 8 dpf cell,
-  which is indistinguishable from a developmental change. CellBender-corrected
-  per-library matrices are produced by the upstream workflow and are the correct
-  input for any cross-timepoint comparison.
+- **Ambient RNA is not corrected in the two aggregates**, and it differs
+  systematically between the timepoints: fraction of reads in cells is ~0.51 at
+  5 dpf but ~0.39 at 8 dpf, and the ranges do not overlap. Uncorrected, genes
+  abundant in the 8 dpf pool appear mildly elevated in every 8 dpf cell, which is
+  indistinguishable from a developmental change. Use `data/cellbender/` for any
+  cross-timepoint claim. The difference is not cosmetic: on the ocular subset,
+  correction cut `lens_fibre` calls to 0.32x and doubled cone calls, because
+  crystallins dominate the ambient pool and make cells score as lens-like.
 - **Sample and stage are confounded at the aggregate level.** With one aggregate
   per timepoint, batch correction would erase the only contrast, so it is off by
-  default. Using the 22 per-library matrices instead separates library from
-  timepoint and gives genuine replication (9 and 13 libraries).
+  default. The 22 per-library matrices separate library from timepoint and give
+  genuine replication (9 and 13), which makes batch correction a real choice
+  rather than an impossible one — decide it from
+  `cluster_composition_by_sample.png` rather than by default.
+- **Doublet removal is partial.** Scrublet's automatic threshold is degenerate on
+  data this shallow, so an explicit one is used; at ~12% sensitivity the removed
+  cells are the detectable minority and roughly five-sixths of expected doublets
+  remain. See the pipeline README.
+- **Annotation is per cluster, so a mixed cluster is uniformly mislabelled.** The
+  `support` column reports the fraction of each cluster's cells that agree with
+  its own label; 4 of 18 ocular sub-clusters fall below 50%.
 - **Depth varies roughly 1.8× between libraries**, which is why aggregation uses
   `--normalize=none`: `mapped` would downsample every library to the shallowest
   and discard real data.
