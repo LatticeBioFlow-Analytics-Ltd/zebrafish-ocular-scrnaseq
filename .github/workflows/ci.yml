@@ -73,14 +73,21 @@ jobs:
           environments: dev
           locked: true
 
-      # Config dataclasses are frozen and take keyword arguments, so a mistyped
-      # or renamed key raises TypeError. That happens when the run starts, which
-      # on real data is after the matrices have loaded — minutes at best. Here it
-      # is immediate.
+      # Two separate questions, and only one of them is answerable on a runner.
       #
-      # Parsing only: `validate_inputs()` is deliberately not called, because the
-      # matrices it checks for are gitignored and rebuilt from public SRA
-      # accessions by the upstream workflow.
+      # `from_yaml` is the schema check: the config dataclasses are frozen and
+      # take keyword arguments, so a mistyped or renamed key raises TypeError.
+      # That otherwise happens when a run starts — on real data, after the
+      # matrices have loaded. It depends on nothing outside the repository, so
+      # every config must pass it.
+      #
+      # `resolve` additionally expands a sample sheet, which reads a file.
+      # config_snakemake.yaml points at the sibling workflow checkout by design,
+      # and that is absent here, so resolution is attempted and reported but a
+      # missing external sheet is a skip rather than a failure.
+      #
+      # `validate_inputs()` is called for neither: the matrices it looks for are
+      # gitignored and rebuilt from public SRA accessions upstream.
       - name: Every config file resolves into a Config
         run: |
           pixi run -e dev python - <<'PY'
@@ -92,13 +99,31 @@ jobs:
           failures = []
           for path in sorted(root.glob("config/config*.yaml")):
               try:
-                  cfg = Config.from_yaml(path).resolve(root)
+                  cfg = Config.from_yaml(path)
               except Exception as error:
-                  failures.append(f"{path.name}: {type(error).__name__}: {error}")
+                  failures.append(f"{path.name}: schema: {type(error).__name__}: {error}")
                   continue
-              print(f"ok  {path.name}: {len(cfg.samples)} sample(s), "
-                    f"outdir={cfg.outdir.name}, "
-                    f"doublet_threshold={cfg.qc.doublet_threshold}")
+
+              sheet = cfg.sample_sheet
+              external = sheet is not None and not (
+                  root / sheet.libraries
+              ).resolve().is_relative_to(root)
+
+              if external:
+                  print(f"ok  {path.name}: schema valid; sample sheet "
+                        f"{sheet.libraries} is outside the repository, "
+                        f"resolution skipped")
+                  continue
+
+              try:
+                  resolved = cfg.resolve(root)
+              except Exception as error:
+                  failures.append(f"{path.name}: resolve: {type(error).__name__}: {error}")
+                  continue
+
+              print(f"ok  {path.name}: {len(resolved.samples)} sample(s), "
+                    f"outdir={resolved.outdir.name}, "
+                    f"doublet_threshold={resolved.qc.doublet_threshold}")
 
           if failures:
               print("\nFAILED:", *failures, sep="\n  ")
