@@ -2,6 +2,15 @@
 # Snakemake workflow (expected as a sibling of this repository; adjust the
 # relative paths below if it lives elsewhere).
 #
+# This runs the SAME analysis as config_cellbender.yaml — the 22 per-library
+# CellBender matrices — differing only in where it reads them from: straight out
+# of the sibling workflow's results tree rather than from a local copy under
+# data/. Use this one when both repositories are checked out side by side and
+# you would rather not duplicate 245 MB of matrices.
+#
+# Note that `outdir` below is `results`, which is also where config.yaml writes.
+# Running both without changing it overwrites one with the other.
+#
 #   pixi run run -- -c config/config_snakemake.yaml --dry-run
 #
 # That workflow publishes three input tiers under scRNA_analysis/results/h5/:
@@ -51,6 +60,13 @@ qc:
   min_cells_per_gene: 3
   run_doublet_detection: true
   expected_doublet_rate: 0.06
+  # Must be explicit. Scrublet's automatic threshold is degenerate on this data
+  # — it returned 0.825, above the highest-scoring observed cell (0.729), so no
+  # cell could be called — and `detect_doublets` now aborts rather than
+  # reporting zero doublets as a finding. Leaving this on "auto" would fail the
+  # run. The reasoning behind 0.25 and the sensitivity table it was read from
+  # are in config_cellbender.yaml.
+  doublet_threshold: 0.25
 
 # Pass 1: whole dissociation.
 cluster:
