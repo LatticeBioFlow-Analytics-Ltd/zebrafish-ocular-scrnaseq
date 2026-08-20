@@ -1,0 +1,64 @@
+# PASS 2 - OCULAR CELL-TYPE MARKERS
+#
+# Applied only to cells assigned to the ocular compartment in pass 1 and
+# re-clustered on ocular-specific highly variable genes. Running this panel on
+# whole-head data would mislabel brain neurons; running the compartment panel on
+# ocular cells would collapse six retinal neuron classes into one.
+#
+# Primary sources for the retinal sets
+# ------------------------------------
+#   rlbp1a, apoeb        Muller glia         Bernardos et al. 2007 (J Neurosci)
+#   vsx1                 bipolar cells       Vitorino et al. 2009 (Neural Dev)
+#   gad1b, gad2          amacrine cells      Sandell et al. 1994
+#   pde6 family          photoreceptors      Abalo et al. 2020
+#   rbpms2b, isl2b       retinal ganglion    Kolsch et al. 2021 (Neuron 109:645)
+#   cldn19               endothelium         Kolosov et al. 2013
+# Broader context: Hoang et al. 2020 (Science 370:eabb8598) for injury/
+# regeneration states, Daniocell (Sur et al. 2023, Dev Cell 58:3028) for
+# stage-matched developmental expression.
+#
+# Kolsch et al. resolved >30 RGC types in zebrafish; this panel deliberately does
+# NOT attempt that. At 5-8 dpf with these cell numbers, class-level resolution
+# (RGC, amacrine, bipolar, horizontal, rod, cone, Muller glia) is the honest
+# ceiling. Subtype claims need targeted subclustering and validation.
+#
+# VERIFY EVERY SYMBOL against ZFIN before relying on an annotation.
+
+cell_types:
+
+  # --- photoreceptors -------------------------------------------------------
+  # Rods and cones separate cleanly; distinguishing cone subtypes by opsin is
+  # possible at these stages but each subtype will be small, so treat any cone
+  # subtype cluster with <50 cells as provisional.
+  rod_photoreceptor:      [rho, gnat1, nr2e3, pde6a, pde6b, saga, rom1a]
+  cone_photoreceptor:     [arr3a, gnat2, pde6c, pde6h, gngt2a, guca1d]
+  cone_uv_blue:           [opn1sw1, opn1sw2, tbx2b, foxq2]
+  cone_red_green:         [opn1lw1, opn1lw2, opn1mw1, opn1mw2, thrb]
+
+  # --- retinal interneurons -------------------------------------------------
+  bipolar_cell:           [vsx1, cabp5a, prkcab, samsn1a, gnb3a, neurod4]
+  amacrine_cell:          [tfap2a, tfap2b, gad1b, gad2, slc6a1b, chata, ptf1a]
+  horizontal_cell:        [lhx1a, rem1, ompb, cx52.6, isl1]
+
+  # --- projection neurons ---------------------------------------------------
+  retinal_ganglion:       [rbpms2b, isl2b, pou4f1, pou4f2, sncga, robo2, nefma]
+
+  # --- glia and support -----------------------------------------------------
+  muller_glia:            [rlbp1a, apoeb, glula, slc1a2b, gfap, cahz, atp1b4]
+  rpe:                    [rpe65a, rpe65c, tyrp1b, pmela, bhlhe40, rgrb]
+
+  # --- progenitors ----------------------------------------------------------
+  # The ciliary marginal zone is the persistent retinal stem-cell niche at the
+  # peripheral retina and is expected to be prominent at 5 dpf and to shrink
+  # relatively by 8 dpf.
+  cmz_progenitor:         [ccnd1, sox2, vsx2, rx1, rx2, her4.1, mki67, pcna]
+  photoreceptor_precursor: [crx, neurod1, otx5, six7]
+
+  # --- anterior segment -----------------------------------------------------
+  lens_fibre:             [cryaa, cryba1l, crybb1, crygm2d1, mipa, lim2.3]
+  corneal_epithelium:     [krt4, krt5, cldnb, epcam, krt8]
+
+  # --- non-retinal cells present in an ocular dissection --------------------
+  ocular_immune:          [mpeg1.1, mfap4, csf1ra, apoc1, lcp1]
+  ocular_endothelium:     [kdrl, fli1a, cdh5, cldn19]
+  periocular_mesenchyme:  [col1a1a, col1a2, dcn, pdgfrb, foxc1a]

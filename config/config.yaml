@@ -1,0 +1,78 @@
+# Analysis configuration. Nothing here is duplicated in the source.
+#
+# Two-pass design
+# ---------------
+# Pass 1 clusters the whole-head dissociation and assigns each cluster to a
+# broad tissue compartment using config/markers_compartment.yaml.
+# Pass 2 subsets each compartment listed under `compartment.subset_groups`,
+# re-runs feature selection and clustering within it, and annotates the ocular
+# subset with the fine panel in config/markers_ocular.yaml.
+#
+# Paths are relative to the repository root. To add a timepoint, append a block
+# to `samples` - nothing else in the project needs to change.
+
+samples:
+  - name: day5
+    h5: data/day5_filtered_feature_bc_matrix.h5
+    timepoint: 5dpf
+  - name: day8
+    h5: data/day8_filtered_feature_bc_matrix.h5
+    timepoint: 8dpf
+
+# Genes plotted individually across clusters and cell types, in both passes.
+# Symbols absent from the data are reported rather than skipped silently - a
+# missing symbol usually means a nomenclature mismatch with the reference GTF,
+# not a gene that is genuinely unexpressed.
+genes_of_interest:
+  - slc39a14
+  - slc30a10
+  - slc39a8
+
+outdir: results
+markers_file: config/markers_ocular.yaml          # pass 2: fine ocular types
+compartment_markers: config/markers_compartment.yaml   # pass 1: broad tissues
+article_panel: config/article_panel.yaml          # Fig 2C/2D/S3 gene panel
+seed: 0
+
+qc:
+  mito_prefix: "mt-"          # zebrafish (ZFIN) convention; use "MT-" for human
+  n_mads: 5.0
+  max_pct_mito: 20.0
+  min_genes_per_cell: 200
+  min_cells_per_gene: 3
+  run_doublet_detection: true
+  expected_doublet_rate: 0.06
+  # Scrublet's automatic threshold is degenerate on this dataset — it returned
+  # 0.825 for both timepoints, above the highest-scoring observed cell (0.729),
+  # so no cell could be called and none was. `detect_doublets` now refuses that
+  # rather than reporting zero doublets as a finding, which means "auto" here
+  # would abort the run. The reasoning behind 0.25, including the sensitivity
+  # table it was chosen from, is in config/config_cellbender.yaml; the same
+  # value is used here so the corrected and uncorrected runs stay comparable on
+  # every axis except the input.
+  doublet_threshold: 0.25
+
+# Pass 1: whole dissociation.
+cluster:
+  n_top_genes: 2000
+  n_pcs: 30
+  n_neighbors: 15
+  leiden_resolutions: [0.4, 0.8, 1.2]
+  primary_resolution: 0.8
+  compute_tsne: true
+  tsne_perplexity: 30.0
+  # See README: sample and developmental stage are confounded here, so the
+  # default is to NOT integrate them away.
+  batch_correct: false
+  batch_key: sample
+
+# Pass 2: per-compartment sub-clustering.
+compartment:
+  min_margin: 0.05            # score gap below which an assignment is flagged
+  subset_groups: [ocular, neural]
+  min_cells_for_subset: 200
+  leiden_resolutions: [0.4, 0.8, 1.2]
+  primary_resolution: 0.8
+  n_top_genes: 2000
+  n_pcs: 30
+  n_neighbors: 15

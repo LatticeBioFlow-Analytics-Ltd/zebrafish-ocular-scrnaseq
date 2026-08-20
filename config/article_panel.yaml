@@ -1,0 +1,28 @@
+# Article figure panels (Fig. 2C, 2D, S3) — gene panel and roles.
+#
+# Transcribed from `transporter_dotplot_control_panel.xlsx` (2026-08-12), which
+# is the authority on why each gene is on the plot. Plot order is deliberate:
+# identity, abundance-matched positives, targets, ambient sentinels,
+# out-of-tissue. Verify every symbol against the annotation release before
+# trusting an absence — a control missing for naming reasons is worse than no
+# control at all.
+
+# Fig 2C: markers that identify the RPE cluster on the UMAP.
+rpe_identity_markers: [rpe65a, tyrp1b, pmela]
+
+# The pass-2 ocular cell-type label whose cluster the claims are about.
+# Matched as an exact label or "<label> (low confidence)".
+rpe_cell_type: rpe
+
+# Fig 2D / S3: the control panel. Keys become the column brackets on the
+# dotplot; order is preserved.
+panel:
+  RPE identity: [rpe65a, tyrp1b]
+  abundance-matched positive: [slc11a2, best1]
+  target: [slc39a14, slc39a8, slc30a10]
+  ambient sentinel: [rho, gnat2, elavl3]
+  # hbae1 does not exist in this reference (Ensembl 116 GRCz11); the expressed
+  # embryonic alpha-globin paralogues here are hbae1.1 / hbae1.3. hbae1.1 is
+  # used and the substitution is recorded in the S3 notes, per the workbook's
+  # own warning about paralogue naming.
+  out-of-tissue: [cryaa, hbae1.1]

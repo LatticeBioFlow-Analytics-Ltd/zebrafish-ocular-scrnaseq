@@ -1,0 +1,82 @@
+# Analysis configuration consuming the output of the `scRNA_analysis`
+# Snakemake workflow (expected as a sibling of this repository; adjust the
+# relative paths below if it lives elsewhere).
+#
+#   pixi run run -- -c config/config_snakemake.yaml --dry-run
+#
+# That workflow publishes three input tiers under scRNA_analysis/results/h5/:
+#
+#   cellbender/<library>_cellbender_filtered.h5   per library, ambient-corrected
+#   raw/<library>_raw_feature_bc_matrix.h5        per library, uncorrected raw
+#   <day5|day8>_filtered_feature_bc_matrix.h5     aggregated per timepoint
+#
+# The per-library CellBender matrices are the workflow's stated analysis input:
+# Fraction Reads in Cells is ~50% across these libraries, so ambient RNA is
+# substantial and the uncorrected matrices let literature marker panels score
+# against cell types they do not belong to. The sample sheet below is the
+# Snakemake project's own libraries.tsv — its `library` and `timepoint`
+# columns are the source of truth, so nothing is parsed from filenames and a
+# renamed file cannot silently relabel a condition.
+
+sample_sheet:
+  libraries: ../scRNA_analysis/config/libraries.tsv
+  h5_pattern: ../scRNA_analysis/results/h5/cellbender/{library}_cellbender_filtered.h5
+
+# To analyse the aggregated, uncorrected matrices instead, comment out
+# `sample_sheet:` above and use an explicit two-sample list:
+#
+# samples:
+#   - name: day5
+#     h5: ../scRNA_analysis/results/h5/day5_filtered_feature_bc_matrix.h5
+#     timepoint: 5dpf
+#   - name: day8
+#     h5: ../scRNA_analysis/results/h5/day8_filtered_feature_bc_matrix.h5
+#     timepoint: 8dpf
+
+genes_of_interest:
+  - slc39a14
+  - slc30a10
+  - slc39a8
+
+outdir: results
+markers_file: config/markers_ocular.yaml          # pass 2: fine ocular types
+compartment_markers: config/markers_compartment.yaml   # pass 1: broad tissues
+seed: 0
+
+qc:
+  mito_prefix: "mt-"          # zebrafish (ZFIN) convention; use "MT-" for human
+  n_mads: 5.0
+  max_pct_mito: 20.0
+  min_genes_per_cell: 200
+  min_cells_per_gene: 3
+  run_doublet_detection: true
+  expected_doublet_rate: 0.06
+
+# Pass 1: whole dissociation.
+cluster:
+  n_top_genes: 2000
+  n_pcs: 30
+  n_neighbors: 15
+  leiden_resolutions: [0.4, 0.8, 1.2]
+  primary_resolution: 0.8
+  compute_tsne: true
+  tsne_perplexity: 30.0
+  # With several libraries per timepoint, `sample` is no longer confounded
+  # with `timepoint`: library-level technical effects are now separable from
+  # stage biology, so batch-correcting on `sample` is a legitimate option here
+  # (unlike the two-library setup, where it would erase the developmental
+  # signal). Left off by default — check cluster_composition_by_sample.png for
+  # library-specific clusters before deciding.
+  batch_correct: false
+  batch_key: sample
+
+# Pass 2: per-compartment sub-clustering.
+compartment:
+  min_margin: 0.05            # score gap below which an assignment is flagged
+  subset_groups: [ocular, neural]
+  min_cells_for_subset: 200
+  leiden_resolutions: [0.4, 0.8, 1.2]
+  primary_resolution: 0.8
+  n_top_genes: 2000
+  n_pcs: 30
+  n_neighbors: 15

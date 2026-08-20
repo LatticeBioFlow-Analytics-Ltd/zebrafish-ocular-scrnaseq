@@ -1,0 +1,96 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "screye"
+version = "0.1.0"
+description = "scRNA-seq QC, clustering and annotation across developmental timepoints"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+
+[project.scripts]
+screye = "screye.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: full-pipeline tests (~90 s); run with `pixi run integration`"]
+# Warnings are errors in the test suite: anything not listed below fails loudly
+# rather than scrolling past. Silencing a warning therefore requires adding it
+# here deliberately, which is a decision with a reviewer, not a global ignore.
+filterwarnings = [
+    "error",
+    "ignore:Variable names are not unique:UserWarning",
+    "ignore:.*MulticoreTSNE.*:UserWarning",
+    "ignore:.*already log-transformed.*:UserWarning",
+    "ignore:Variable names are not unique:UserWarning",
+    "ignore:.*is_categorical_dtype.*:FutureWarning",
+    "ignore:.*observed=False.*:FutureWarning",
+]
+
+# ---------------------------------------------------------------------------
+# pixi
+#
+# Constraints below are deliberately loose; `pixi.lock` pins every package to an
+# exact version and hash for every listed platform. The lockfile is committed,
+# so `pixi install` reproduces this environment bit-for-bit rather than
+# re-solving and drifting the way `conda env create` does.
+# ---------------------------------------------------------------------------
+
+[tool.pixi.workspace]
+name = "screye"
+channels = ["conda-forge", "bioconda"]
+platforms = ["linux-64", "osx-arm64", "osx-64", "win-64"]
+
+[tool.pixi.dependencies]
+python = "3.12.*"
+scanpy = ">=1.12,<2"
+anndata = ">=0.13,<0.14"
+numpy = ">=2.0,<3"
+pandas = ">=2.2"
+scipy = ">=1.14"
+matplotlib-base = ">=3.9"
+h5py = ">=3.11"
+pyyaml = ">=6.0"
+leidenalg = ">=0.10"
+python-igraph = ">=0.11"
+scikit-learn = ">=1.5"
+scikit-misc = ">=0.3"      # required by scanpy's seurat_v3 HVG flavour
+scikit-image = ">=0.24"    # required by sc.pp.scrublet's automatic threshold;
+                           # without it doublet detection warns and no-ops
+
+# Installing the project itself means `import screye` works without a
+# PYTHONPATH hack, and the `screye` console script is on the path.
+[tool.pixi.pypi-dependencies]
+screye = { path = ".", editable = true }
+
+[tool.pixi.feature.dev.dependencies]
+pytest = ">=8.0"
+openpyxl = ">=3.1"          # fills the article control workbook (screye.article --xlsx)
+nbclient = ">=0.10"
+nbformat = ">=5.10"
+ipykernel = ">=6.29"
+jupyterlab = ">=4.2"
+ruff = ">=0.6"
+
+[tool.pixi.environments]
+default = { solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }
+
+[tool.pixi.tasks]
+# Each task names its config explicitly. Passing `-- -c other.yaml` to a task
+# that already carries a `-c` appends a second one, and argparse silently keeps
+# the last — which happens to work, but only by accident.
+run = { cmd = "screye -c config/config.yaml", description = "Uncorrected per-timepoint aggregates (superseded; kept for comparison)" }
+run-cellbender = { cmd = "screye -c config/config_cellbender.yaml", description = "Ambient-corrected run over the 22 per-library CellBender matrices" }
+
+[tool.pixi.feature.dev.tasks]
+test = { cmd = "pytest tests -q -m 'not integration'", description = "Unit tests, no data required (~4 s)" }
+integration = { cmd = "pytest tests -q -m integration", description = "Full pipeline on synthetic data, no data required (~90 s)" }
+check = { depends-on = ["lint", "test"], description = "Lint and unit tests" }
+lint = { cmd = "ruff check src tests", description = "Static checks" }
+lab = { cmd = "jupyter lab notebooks/", description = "Open the walkthrough notebook" }
+clean = { cmd = "rm -rf results .pytest_cache tests/fixtures/synthetic", description = "Remove generated outputs" }

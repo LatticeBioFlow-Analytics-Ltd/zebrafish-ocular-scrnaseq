@@ -1,0 +1,104 @@
+# PASS 1 - COMPARTMENT-LEVEL MARKERS
+#
+# Scope: whole-head dissociation (brain + eyes), Raj et al. 2020 (Neuron 108:1058;
+# GEO GSE158142). The purpose of this panel is NOT fine cell-type annotation. It
+# is to partition ~40 clusters into a handful of tissue compartments so that the
+# ocular compartment can be subset and re-clustered at its own resolution.
+#
+# Design rationale
+# ----------------
+# Applying a retinal panel directly to whole-head data forces non-ocular clusters
+# into whichever retinal label scores least badly. Two-pass annotation avoids
+# this: broad compartments first, fine identity second, within compartment.
+#
+# Sets are deliberately BROAD and somewhat overlapping. Overlap is handled by the
+# scoring margin rule (see `compartments.py`), which declines to assign a
+# compartment when the top two scores are close, rather than asserting one.
+#
+# VERIFY EVERY SYMBOL against ZFIN (zfin.org) and against Daniocell
+# (daniocell.nichd.nih.gov; Sur et al. 2023, Dev Cell 58:3028) at 5-8 dpf before
+# relying on any assignment. Zebrafish paralogues (a/b suffixes) are the most
+# common source of silent mismatch.
+
+cell_types:
+
+  # === OCULAR ===============================================================
+  # These four sets define the compartment that pass 2 subsets and re-clusters.
+
+  # Photoreceptors. rho and the cone opsins are the most specific markers in the
+  # whole panel; pde6 family is pan-photoreceptor (Abalo et al. 2020).
+  ocular_photoreceptor:
+    [rho, gnat1, nr2e3, pde6a, pde6c, pde6h, arr3a, gnat2,
+     opn1sw1, opn1sw2, opn1mw1, opn1lw2, crx, neurod1]
+
+  # Retinal pigment epithelium. Pigment-synthesis genes are shared with skin
+  # melanophores, so rpe65a is the discriminating symbol here.
+  ocular_rpe:
+    [rpe65a, rpe65c, tyrp1b, pmela, bhlhe40, ptgdsb.1, rgrb]
+
+  # Lens and cornea. Crystallins are extremely highly expressed and are a common
+  # ambient-RNA contaminant; treat a weak lens signal in other clusters as
+  # suspected soup rather than biology.
+  ocular_lens_cornea:
+    [cryaa, cryba1l, crybb1, crygm2d1, mipa, lim2.3, krt4, krt5, cldnb]
+
+  # Retinal neurons and Muller glia. rlbp1a/apoeb for Muller glia and vsx1 for
+  # bipolar cells follow Bernardos et al. 2007 and Vitorino et al. 2009; rbpms2b
+  # and isl2b for RGCs follow Kolsch et al. 2021 (Neuron 109:645).
+  ocular_retinal_neuron_glia:
+    [rlbp1a, apoeb, glula, vsx1, vsx2, cabp5a, rbpms2b, isl2b, pou4f1,
+     lhx1a, gad1b, gad2, tfap2a, slc1a2b]
+
+  # === NEURAL (NON-OCULAR) ==================================================
+
+  # Pan-neuronal. elavl3/elavl4 and snap25a label differentiated neurons across
+  # the entire CNS, including retinal neurons - which is why compartment
+  # assignment uses the margin rule rather than a single top score.
+  neuron_differentiated:
+    [elavl3, elavl4, snap25a, snap25b, sncb, tubb5, stmn1b, nefma]
+
+  # Neural progenitors and radial glia. Overlaps the ciliary marginal zone of the
+  # eye; expect this set to score highly in the CMZ cluster.
+  neural_progenitor_radial_glia:
+    [sox2, sox19a, her4.1, her4.2, fabp7a, s100b, gfap, slc1a2b, notch1a]
+
+  # Oligodendrocyte lineage.
+  oligodendrocyte_opc:
+    [olig1, olig2, sox10, mbpa, plp1b, cldnk, mpz]
+
+  # === NON-NEURAL / CONTAMINATING ==========================================
+
+  # Microglia and other immune cells. mpeg1.1 and mfap4 are macrophage-lineage.
+  immune_microglia:
+    [mpeg1.1, mfap4, csf1ra, apoc1, lcp1, coro1a, cd74a]
+
+  # Neural crest and derivatives.
+  neural_crest:
+    [foxd3, sox10, crestin, twist1a, dlx2a]
+
+  # Vascular endothelium.
+  endothelium:
+    [kdrl, fli1a, cdh5, tie1, ramp2]
+
+  # Blood.
+  erythrocyte:
+    [hbae1.1, hbae3, hbbe1.1, hbbe2, alas2]
+
+  # Skeletal muscle - abundant in whole-head dissociations from the jaw and
+  # extraocular muscles.
+  skeletal_muscle:
+    [mylz3, myhz1.1, myhc4, acta1b, desma, ckma, tnnt3a]
+
+  # Cartilage and connective tissue of the head skeleton.
+  cartilage_connective:
+    [col2a1a, col1a1a, col1a2, sox9a, dcn, matn4, prrx1a]
+
+  # Epidermis and periderm.
+  epidermis:
+    [krt4, krt5, krt8, cldni, icn, agr2]
+
+  # Cycling cells. Cuts across every compartment; scored so that a
+  # proliferation-dominated cluster is recognised as such rather than being
+  # assigned a lineage it does not have.
+  proliferating:
+    [mki67, pcna, top2a, cdk1, ccnb1, mcm5]

@@ -1,0 +1,115 @@
+# Ambient-corrected run: the 22 per-library CellBender matrices.
+#
+#   pixi run run -- -c config/config_cellbender.yaml --dry-run
+#   pixi run run -- -c config/config_cellbender.yaml
+#
+# This is the analysis that supersedes `config/config.yaml`. That one reads the
+# two per-timepoint Cell Ranger aggregates and is kept only for comparison:
+# every parameter below is identical to it, so any difference between
+# `results/` and `results_cellbender/` is attributable to the change of input
+# and to nothing else.
+#
+# Two things change about the input, and they change together:
+#
+#   1. Ambient RNA is removed. Fraction of reads in cells is ~0.51 at 5 dpf but
+#      ~0.39 at 8 dpf and the ranges do not overlap, so contamination differs
+#      systematically between the timepoints. Uncorrected, genes abundant in the
+#      8 dpf soup look mildly elevated in every 8 dpf cell — indistinguishable
+#      from a developmental change. This is the input that makes a
+#      cross-timepoint claim defensible.
+#
+#   2. Samples become libraries. 22 of them, 9 at 5 dpf and 13 at 8 dpf, instead
+#      of one aggregate per stage. That is what turns `sample` into a real
+#      replicate rather than a synonym for `timepoint`, and it is what lets
+#      Scrublet score doublets within the library they were actually generated
+#      in.
+#
+# Note that this doubles the cells LOADED (208,308 vs 102,579) without doubling
+# the cells ANALYSED: CellBender calls many more marginal barcodes and
+# `min_genes_per_cell: 200` removes most of them again. Expect the retained
+# count to land near the 94,140 of the uncorrected run, not at twice it.
+
+# Libraries are declared by reference to the upstream workflow's own sheet
+# rather than re-typed here. `library` and `timepoint` are read from its
+# columns, so nothing is parsed out of a filename and a renamed file cannot
+# silently relabel a stage. The sheet is a verbatim copy of
+# scRNA_analysis/config/libraries.tsv, kept local so this repository plus its
+# data directory is self-contained.
+sample_sheet:
+  libraries: config/libraries.tsv
+  h5_pattern: data/cellbender/{library}_cellbender_filtered.h5
+
+genes_of_interest:
+  - slc39a14
+  - slc30a10
+  - slc39a8
+
+# Deliberately NOT `results`: the uncorrected figures stay on disk until the
+# corrected ones have been looked at and judged sound.
+outdir: results_cellbender
+markers_file: config/markers_ocular.yaml               # pass 2: fine ocular types
+compartment_markers: config/markers_compartment.yaml   # pass 1: broad tissues
+article_panel: config/article_panel.yaml               # Fig 2C/2D/S3 gene panel
+seed: 0
+
+qc:
+  mito_prefix: "mt-"          # zebrafish (ZFIN) convention; use "MT-" for human
+  n_mads: 5.0
+  max_pct_mito: 20.0
+  min_genes_per_cell: 200
+  min_cells_per_gene: 3
+  run_doublet_detection: true
+  expected_doublet_rate: 0.06
+  # Scrublet's automatic threshold is unusable on this dataset. Its
+  # simulated-doublet score histogram is unimodal — median genes per cell is
+  # 598-863, and a whole-head dissociation is a continuum of related progenitor
+  # states, so most doublets are not distinguishable from real intermediate
+  # cells. Otsu's method had no trough to find and returned 0.825, above the
+  # highest-scoring observed cell (0.729) and above every simulated doublet, so
+  # zero cells were called in every run before this one.
+  #
+  # 0.25 is chosen from Scrublet's own consistency check, expected rate x
+  # sensitivity against the observed call rate:
+  #
+  #     threshold   sensitivity   predicted   actual
+  #        0.15         43.9%       2.64%     10.40%   inconsistent
+  #        0.20         25.9%       1.55%      3.97%   inconsistent
+  #        0.25         16.4%       0.98%      1.71%   close
+  #        0.30         11.5%       0.69%      0.87%   consistent
+  #
+  # Below ~0.25 the threshold calls far more cells than the doublet model can
+  # account for, i.e. it is calling singlets. Note what this does NOT claim: at
+  # 16% sensitivity the cells removed are the detectable minority of doublets,
+  # not all of them. The true rate is probably near the 6% assumed above.
+  doublet_threshold: 0.25
+
+# Pass 1: whole dissociation.
+cluster:
+  n_top_genes: 2000
+  n_pcs: 30
+  n_neighbors: 15
+  leiden_resolutions: [0.4, 0.8, 1.2]
+  primary_resolution: 0.8
+  compute_tsne: true
+  tsne_perplexity: 30.0
+  # Off for this first run, but for a different reason than in config.yaml.
+  # There, `sample` and `timepoint` were the same two-level factor and
+  # correcting on one would have erased the other. Here 9 and 13 libraries make
+  # them separable, so correction is now a legitimate option rather than an
+  # impossible one — it is simply not yet justified. Decide it from evidence:
+  # look at results_cellbender/figures/cluster_composition_by_sample.png and
+  # turn this on only if clusters are drawn from single libraries rather than
+  # spread across them.
+  batch_correct: false
+  batch_key: sample
+
+# Pass 2: per-compartment sub-clustering.
+compartment:
+  min_margin: 0.05            # score gap below which an assignment is flagged
+  subset_groups: [ocular, neural]
+  min_cells_for_subset: 200
+  leiden_resolutions: [0.4, 0.8, 1.2]
+  primary_resolution: 0.8
+  n_top_genes: 2000
+  n_pcs: 30
+  n_neighbors: 15
