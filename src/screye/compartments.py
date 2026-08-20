@@ -150,6 +150,12 @@ def cluster_support(
       low while being perfectly homogeneous biologically. Developmental continua
       do the same: a precursor cluster grading into its mature type will always
       have cells that score higher for the destination.
+    - A panel that does not cover the tissue. Cells with no appropriate label
+      are forced onto whichever scores least badly, and that assignment is
+      incoherent by construction. Scoring the ocular panel against the whole
+      head flags 16 of 34 clusters this way, against 4 of 34 for the
+      compartment panel on the same clusters — the difference is the panel, not
+      the clustering, and no re-clustering would fix it.
 
     Checking *which* labels the dissenting cells prefer separates the two, which
     is why the per-cell winner is worth inspecting rather than just the fraction.
@@ -247,8 +253,12 @@ def assign_compartments(
         log.warning(
             "  %d/%d cluster(s) below %.0f%% internal support — fewer than that "
             "share of their cells score highest for the label the cluster was "
-            "given. Those clusters are mixtures; re-clustering at a higher "
-            "resolution is the fix, not a different panel.",
+            "given. Two causes look identical here: a cluster holding two "
+            "distinct populations (re-cluster at a higher resolution), or a "
+            "panel with no appropriate label for these cells, which forces them "
+            "onto whichever label scores least badly (use a panel that covers "
+            "the tissue). Compare the per-cell winners in the evidence table to "
+            "tell them apart.",
             n_mixed, len(evidence), 100 * cfg.compartment.min_support,
         )
     return evidence.sort_values(["support", "margin"])

@@ -153,8 +153,11 @@ def score_cell_types(
     if n_mixed:
         worst = support.sort_values().head(3)
         log.warning(
-            "%d cluster(s) below %.0f%% internal support — a mixture labelled as "
-            "one type. Lowest: %s", n_mixed, 100 * min_support,
+            "%d cluster(s) below %.0f%% internal support — most of their cells "
+            "score highest for some other label. Where a panel does not cover "
+            "the tissue this is expected: cells with no appropriate label are "
+            "forced onto whichever scores least badly. Lowest: %s",
+            n_mixed, 100 * min_support,
             ", ".join(f"{c}={v:.0%}" for c, v in worst.items()),
         )
     return scores
@@ -268,8 +271,8 @@ def subcluster(
     if n_mixed:
         worst = support.sort_values().head(3)
         log.warning(
-            "  [%s] %d/%d sub-cluster(s) below %.0f%% internal support — a "
-            "mixture labelled as one type. Lowest: %s",
+            "  [%s] %d/%d sub-cluster(s) below %.0f%% internal support — most "
+            "of their cells score highest for some other label. Lowest: %s",
             label, n_mixed, len(labels), 100 * ccfg.min_support,
             ", ".join(f"{c}={v:.0%}" for c, v in worst.items()),
         )
