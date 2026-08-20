@@ -100,13 +100,20 @@ def load_markers(path: Path) -> dict[str, list[str]]:
         return yaml.safe_load(handle)["cell_types"]
 
 
-def score_cell_types(adata: ad.AnnData, markers: dict[str, list[str]]) -> pd.DataFrame:
+def score_cell_types(
+    adata: ad.AnnData,
+    markers: dict[str, list[str]],
+    min_support: float = 0.5,
+) -> pd.DataFrame:
     """Score each cell against every marker set and label clusters by mean score.
 
     Returns the cluster-by-cell-type score matrix so that the assignment is
-    auditable: a cluster whose top two scores are close is a cluster whose label
-    should not be trusted without further evidence.
+    auditable on two independent axes. A cluster whose top two scores are close is
+    one the panel cannot resolve. A cluster whose cells mostly disagree with its
+    own label is a mixture — see `compartments.cluster_support`, which is the
+    check that catches the failure a margin cannot.
     """
+    from .compartments import cluster_support, flag_mixed
     present = {
         name: [g for g in genes if g in adata.raw.var_names]
         for name, genes in markers.items()
@@ -127,15 +134,29 @@ def score_cell_types(adata: ad.AnnData, markers: dict[str, list[str]]) -> pd.Dat
     top2 = scores.apply(lambda r: r.nlargest(2).to_numpy(), axis=1)
     margin = top2.apply(lambda v: v[0] - v[1] if len(v) > 1 else float("inf"))
 
-    label_map = {
-        cl: (lab if margin[cl] > 0.05 else f"{lab} (low confidence)")
-        for cl, lab in best.items()
-    }
-    adata.obs["cell_type"] = adata.obs["leiden"].map(label_map).astype("category")
+    labels = pd.Series(
+        {cl: (lab if margin[cl] > 0.05 else f"{lab} (low confidence)")
+         for cl, lab in best.items()},
+        name="label",
+    )
+    support = cluster_support(adata, "leiden", labels, prefix="score")
+    labels = flag_mixed(labels, support, min_support)
+    adata.obs["cell_type"] = adata.obs["leiden"].map(labels).astype("category")
 
-    n_low = sum("low confidence" in v for v in label_map.values())
+    scores = scores.copy()
+    scores["support"] = support
+
+    n_low = int(labels.str.contains("low confidence").sum())
     if n_low:
         log.warning("%d cluster(s) labelled with a narrow score margin", n_low)
+    n_mixed = int(labels.str.contains("mixed").sum())
+    if n_mixed:
+        worst = support.sort_values().head(3)
+        log.warning(
+            "%d cluster(s) below %.0f%% internal support — a mixture labelled as "
+            "one type. Lowest: %s", n_mixed, 100 * min_support,
+            ", ".join(f"{c}={v:.0%}" for c, v in worst.items()),
+        )
     return scores
 
 
@@ -154,7 +175,8 @@ def process(adata: ad.AnnData, cfg: Config) -> tuple[ad.AnnData, pd.DataFrame, p
     hvg.raw = adata.raw.to_adata()
     hvg = embed(hvg, cfg.cluster, cfg.seed)
     hvg = cluster(hvg, cfg.cluster, cfg.seed)
-    scores = score_cell_types(hvg, load_markers(cfg.markers_file))
+    scores = score_cell_types(hvg, load_markers(cfg.markers_file),
+                              min_support=cfg.compartment.min_support)
     de = rank_markers(hvg)
     return hvg, scores, de
 
@@ -176,7 +198,13 @@ def subcluster(
 
     `label` names the compartment and is used only for logging.
     """
-    from .compartments import assign_by_margin, load_panel, score_panel
+    from .compartments import (
+        assign_by_margin,
+        cluster_support,
+        flag_mixed,
+        load_panel,
+        score_panel,
+    )
 
     ccfg = cfg.compartment
     log.info("  [%s] re-selecting features on %d cells", label, adata.n_obs)
@@ -222,17 +250,29 @@ def subcluster(
     panel = load_panel(markers_file)
     scores = score_panel(hvg, panel, groupby="leiden", prefix="score")
     labels, margins = assign_by_margin(scores, ccfg.min_margin)
+    support = cluster_support(hvg, "leiden", labels, prefix="score")
+    labels = flag_mixed(labels, support, ccfg.min_support)
     hvg.obs["cell_type"] = hvg.obs["leiden"].map(labels).astype("category")
 
     scores = scores.copy()
     scores["assigned"] = labels
     scores["margin"] = margins
+    scores["support"] = support
     scores["n_cells"] = hvg.obs["leiden"].value_counts()
 
     n_low = int(labels.str.contains("low confidence").sum())
     if n_low:
         log.warning("  [%s] %d/%d sub-cluster(s) labelled on a narrow margin",
                     label, n_low, len(labels))
+    n_mixed = int(labels.str.contains("mixed").sum())
+    if n_mixed:
+        worst = support.sort_values().head(3)
+        log.warning(
+            "  [%s] %d/%d sub-cluster(s) below %.0f%% internal support — a "
+            "mixture labelled as one type. Lowest: %s",
+            label, n_mixed, len(labels), 100 * ccfg.min_support,
+            ", ".join(f"{c}={v:.0%}" for c, v in worst.items()),
+        )
 
     de = rank_markers(hvg)
     return hvg, scores, de

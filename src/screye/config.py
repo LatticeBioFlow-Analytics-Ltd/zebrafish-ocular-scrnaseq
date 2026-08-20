@@ -162,6 +162,23 @@ class CompartmentConfig:
     # assignment to be treated as confident. Below this the cluster keeps the
     # top label but is flagged, and the flag propagates into the outputs.
     min_margin: float = 0.05
+    # Minimum fraction of a cluster's cells that must individually score highest
+    # for the label the cluster was given. Below this the cluster is a mixture
+    # and the label is suffixed `(mixed)`.
+    #
+    # This is a different question from the margin, and the margin cannot answer
+    # it: margins compare panels against each other on a cluster mean, so a
+    # cluster containing two distinct populations can score one of them
+    # decisively and never be flagged. In the uncorrected GSE158142 ocular
+    # subset, a cluster of 853 cells holding 335 cones and 129 lens fibre cells
+    # was labelled `lens_fibre` on a margin of 0.152 — three times the threshold
+    # above — because crystallins are 35-40% of a lens cell's UMIs and lift the
+    # mean on their own. Support for that cluster is ~0.28.
+    #
+    # 0.5 is a deliberately permissive floor: it asks only that a plurality of
+    # cells agree with their own label. Raise it for a homogeneous tissue; a
+    # continuum of related progenitor states will legitimately sit lower.
+    min_support: float = 0.5
     # Compartments to subset and re-cluster in pass 2. Both are kept: the
     # neural subset is the comparison that makes the ocular result meaningful.
     subset_groups: tuple[str, ...] = ("ocular", "neural")

@@ -8,8 +8,11 @@ is not.
 
 from __future__ import annotations
 
+import inspect
+import re
 from pathlib import Path
 
+import anndata as ad
 import matplotlib
 import numpy as np
 import pandas as pd
@@ -19,7 +22,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from screye import figures as figs
-from screye.compartments import assign_by_margin, load_panel
+from screye.compartments import (
+    assign_by_margin,
+    assign_compartments,
+    cluster_support,
+    flag_mixed,
+    load_panel,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -56,6 +65,135 @@ def test_margin_threshold_is_respected_at_the_boundary():
 
 
 # --- marker panels ----------------------------------------------------------
+
+def _scored_adata(spec: dict[str, list[tuple[str, int]]]) -> ad.AnnData:
+    """Build cells carrying per-cell panel scores.
+
+    `spec` maps cluster id to (winning panel, count) pairs, so a mixed cluster is
+    declared directly: {"3": [("lens_fibre", 129), ("cone_photoreceptor", 335)]}.
+    """
+    panels = sorted({p for pairs in spec.values() for p, _ in pairs})
+    clusters, winners = [], []
+    for cluster, pairs in spec.items():
+        for panel, n in pairs:
+            clusters += [cluster] * n
+            winners += [panel] * n
+    # Index set before construction: the suite turns warnings into errors, and
+    # AnnData emits ImplicitModificationWarning when it has to stringify one.
+    obs = pd.DataFrame(
+        {"leiden": pd.Categorical(clusters)},
+        index=[f"cell{i}" for i in range(len(clusters))],
+    )
+    for panel in panels:
+        obs[f"score_{panel}"] = [1.0 if w == panel else 0.0 for w in winners]
+    return ad.AnnData(np.zeros((len(clusters), 1), dtype="float32"), obs=obs)
+
+
+def test_support_catches_a_mixed_cluster_a_margin_cannot():
+    """Regression for the real GSE158142 failure.
+
+    Ocular sub-cluster 3 held 335 cone photoreceptors and 129 lens fibre cells.
+    Crystallins are 35-40% of a lens cell's UMIs, so the lens minority carried the
+    cluster mean and it was labelled `lens_fibre` on a margin of 0.152 — three
+    times the flag threshold. The cones scored 0.14% crystallin: not contaminated,
+    outvoted by an average. Nothing in the outputs said so.
+    """
+    adata = _scored_adata({
+        "3": [("cone_photoreceptor", 335), ("lens_fibre", 129)],
+        "2": [("lens_fibre", 265)],
+    })
+    labels = pd.Series({"3": "lens_fibre", "2": "lens_fibre"}, name="label")
+    support = cluster_support(adata, "leiden", labels, prefix="score")
+
+    assert support["3"] == pytest.approx(129 / 464, abs=1e-6)
+    assert support["2"] == 1.0
+
+    flagged = flag_mixed(labels, support, min_support=0.5)
+    assert flagged["3"] == "lens_fibre (mixed)"
+    assert flagged["2"] == "lens_fibre", "a homogeneous cluster must not be flagged"
+
+
+def test_mixed_takes_precedence_over_low_confidence():
+    """The two flags mean different things and the more serious one must show.
+
+    A narrow margin says the panel struggled to choose between two identities for
+    one population. Low support says it is not one population. The second wants
+    re-clustering, not a better panel.
+    """
+    adata = _scored_adata({"1": [("rpe", 10), ("corneal_epithelium", 90)]})
+    labels = pd.Series({"1": "rpe (low confidence)"}, name="label")
+    support = cluster_support(adata, "leiden", labels, prefix="score")
+    flagged = flag_mixed(labels, support, min_support=0.5)
+
+    assert flagged["1"] == "rpe (mixed)"
+    assert "low confidence" not in flagged["1"]
+
+
+def test_support_is_independent_of_margin():
+    """A cluster can be decisively labelled and still be a mixture.
+
+    This is the whole point: the margin is computed from cluster means, so it
+    cannot see within-cluster composition at all.
+    """
+    scores = pd.DataFrame({"lens_fibre": [0.334], "amacrine_cell": [0.182],
+                           "cone_photoreceptor": [0.134]}, index=["3"])
+    labels, margins = assign_by_margin(scores, min_margin=0.05)
+    assert margins["3"] == pytest.approx(0.152, abs=1e-3)
+    assert labels["3"] == "lens_fibre", "comfortable margin, so no margin flag"
+
+    adata = _scored_adata({"3": [("cone_photoreceptor", 335), ("lens_fibre", 129)]})
+    support = cluster_support(adata, "leiden", labels, prefix="score")
+    assert support["3"] < 0.5, "yet the cluster is a mixture"
+
+
+def test_evidence_columns_covers_every_non_score_column():
+    """Regression: the score heatmap selects columns by excluding this list.
+
+    `plot_compartments` treats anything not named in EVIDENCE_COLUMNS as a
+    marker-set score and hands it to `imshow`. Adding `support` and `mixed` to
+    the evidence table without adding them here put a boolean into the matrix,
+    which made the whole array dtype=object and raised "Image data of dtype
+    object cannot be converted to float" — minutes into a run, inside a plotting
+    call with nothing to point at the real cause.
+
+    Asserted against the real builder rather than a copy of the list, so the two
+    cannot drift apart again.
+    """
+    from screye.compartments import EVIDENCE_COLUMNS
+
+    source = inspect.getsource(assign_compartments)
+    assigned = set(re.findall(r'evidence\[["\'](\w+)["\']\]\s*=', source))
+    missing = assigned - set(EVIDENCE_COLUMNS)
+    assert not missing, (
+        f"assign_compartments writes {sorted(missing)} into the evidence table "
+        "but EVIDENCE_COLUMNS does not list them; they would be plotted as scores"
+    )
+
+
+def test_score_matrix_stays_numeric_after_excluding_metadata():
+    """The heatmap must never receive a non-numeric column."""
+    from screye.compartments import EVIDENCE_COLUMNS
+
+    evidence = pd.DataFrame(
+        {"ocular_lens_cornea": [0.4, 0.1], "neuron_differentiated": [0.1, 0.6],
+         "assigned": ["a", "b"], "margin": [0.3, 0.5], "support": [0.9, 0.2],
+         "n_cells": [100, 200], "low_confidence": [False, False],
+         "mixed": [False, True]},
+        index=["0", "1"],
+    )
+    matrix = evidence[[c for c in evidence.columns if c not in EVIDENCE_COLUMNS]]
+    assert list(matrix.columns) == ["ocular_lens_cornea", "neuron_differentiated"]
+    assert matrix.to_numpy().dtype.kind == "f", "imshow needs a float array"
+
+
+def test_support_without_scores_returns_empty_rather_than_failing():
+    adata = ad.AnnData(
+        np.zeros((3, 1), dtype="float32"),
+        obs=pd.DataFrame({"leiden": pd.Categorical(["0"] * 3)},
+                         index=["a", "b", "c"]),
+    )
+    assert cluster_support(adata, "leiden", pd.Series({"0": "x"}), prefix="score").empty
+
 
 def test_both_shipped_panels_parse_and_are_non_empty():
     for name in ("markers_compartment.yaml", "markers_ocular.yaml"):

@@ -17,7 +17,7 @@ import scanpy as sc
 
 from . import figures as figs
 from .cluster import process, subcluster
-from .compartments import assign_compartments, subset_compartment
+from .compartments import EVIDENCE_COLUMNS, assign_compartments, subset_compartment
 from .config import Config
 from .provenance import write_manifest
 from .qc import build_qc_dataset
@@ -528,8 +528,7 @@ def plot_compartments(adata: ad.AnnData, evidence: pd.DataFrame, fig_dir: Path) 
     # Score heatmap. Diverging red/blue centred on zero: a compartment score is
     # a difference from a matched random reference set, so zero is the
     # meaningful midpoint and a sequential scale would misrepresent it.
-    score_cols = [c for c in evidence.columns
-                  if c not in ("assigned", "margin", "n_cells", "low_confidence")]
+    score_cols = [c for c in evidence.columns if c not in EVIDENCE_COLUMNS]
     matrix = evidence[score_cols]
     # Row pitch as in the dotplots: enough for an 8 pt row label, so the figure
     # grows with the cluster count instead of squeezing rows together.
@@ -544,12 +543,19 @@ def plot_compartments(adata: ad.AnnData, evidence: pd.DataFrame, fig_dir: Path) 
     ax.set_yticklabels([f"{i}  (n={int(evidence['n_cells'].iloc[k])})"
                         for k, i in enumerate(matrix.index)])
     ax.set_ylabel("pass-1 cluster")
-    for k, low in enumerate(evidence["low_confidence"]):
-        if low:
-            ax.text(len(score_cols) - 0.3, k, "*", va="center", fontsize=8)
+    # Both flags are marked, because they fail differently. A narrow margin says
+    # the panel could not choose between two identities for one population; low
+    # support says the cluster is not one population. Showing only the first
+    # would repeat the omission that let an 853-cell mixture through unremarked.
+    for k, (low, mixed) in enumerate(zip(evidence["low_confidence"],
+                                         evidence.get("mixed", False))):
+        flag = ("*" if low else "") + ("†" if mixed else "")
+        if flag:
+            ax.text(len(score_cols) - 0.3, k, flag, va="center", fontsize=8)
     cbar = fig.colorbar(im, ax=ax, shrink=0.6, pad=0.12)
     cbar.set_label("marker set score\n(red = enriched, blue = depleted)")
-    ax.set_title("Compartment assignment evidence  (* narrow margin)")
+    ax.set_title("Compartment assignment evidence  "
+                 "(* narrow margin, † mixed cluster)")
     figs.save_figure(fig_dir, "pass1_compartment_scores")
 
 

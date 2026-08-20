@@ -34,6 +34,17 @@ from .config import Config
 
 log = logging.getLogger(__name__)
 
+# Non-score columns appended to an evidence table. Named once, because consumers
+# separate scores from metadata by exclusion: anything not listed here is treated
+# as a marker-set score and plotted as a number. Adding a column without adding
+# it here puts it into the heatmap, where a boolean turns the whole matrix to
+# dtype=object and matplotlib raises "Image data of dtype object cannot be
+# converted to float" — several minutes into a run, in a plotting call far from
+# the cause.
+EVIDENCE_COLUMNS = (
+    "assigned", "margin", "support", "n_cells", "low_confidence", "mixed",
+)
+
 
 def load_panel(path: str | Path) -> dict[str, list[str]]:
     """Read a marker panel from YAML."""
@@ -103,6 +114,83 @@ def assign_by_margin(
     return labels, margins
 
 
+def cluster_support(
+    adata: ad.AnnData,
+    groupby: str,
+    labels: pd.Series,
+    prefix: str = "score",
+) -> pd.Series:
+    """Fraction of a cluster's cells whose own best-scoring panel is the cluster's label.
+
+    Labels are assigned per cluster from the cluster's *mean* score, which cannot
+    see whether the cluster is one population or several. A mixed cluster gets one
+    confident label, and every cell of the minority identity is silently
+    mislabelled — the margin check does not catch it, because it compares panels
+    against each other rather than cells against their cluster.
+
+    That is not hypothetical. In the uncorrected GSE158142 ocular subset, one
+    sub-cluster of 853 cells held 335 cone photoreceptors alongside 129 lens fibre
+    cells. It was labelled `lens_fibre` on a margin of 0.152 — three times the
+    flag threshold — because lens crystallins are 35-40% of a lens cell's UMIs, so
+    a minority of genuine lens cells lifts the whole cluster's mean decisively
+    while the cone majority contributes comparatively little. The cones carried
+    0.14% crystallin: they were not contaminated, merely outvoted by an average.
+
+    Scoring each cell independently and asking how many agree with their cluster
+    catches this. A cluster at 0.28 support is not a population, it is a mixture.
+
+    Read a low value as "look here", not as "this label is wrong". The metric
+    counts any disagreement equally, so two quite different situations produce a
+    low number:
+
+    - Genuinely distinct types sharing a cluster — the lens/cone case above, and
+      the one this exists to catch.
+    - Sibling panels splitting a vote. `cone_photoreceptor` and `cone_red_green`
+      are both cones, so a cone cluster whose cells divide between them scores
+      low while being perfectly homogeneous biologically. Developmental continua
+      do the same: a precursor cluster grading into its mature type will always
+      have cells that score higher for the destination.
+
+    Checking *which* labels the dissenting cells prefer separates the two, which
+    is why the per-cell winner is worth inspecting rather than just the fraction.
+    """
+    cols = [c for c in adata.obs.columns if c.startswith(f"{prefix}_")]
+    if not cols:
+        return pd.Series(dtype=float, name="support")
+
+    per_cell = adata.obs[cols].idxmax(axis=1).str.removeprefix(f"{prefix}_")
+    stem = labels.str.replace(r" \((low confidence|mixed)\)$", "", regex=True)
+    expected = adata.obs[groupby].map(stem)
+
+    agreement = pd.Series(
+        per_cell.to_numpy() == expected.to_numpy(), index=adata.obs.index
+    )
+    support = agreement.groupby(adata.obs[groupby], observed=True).mean()
+    support.name = "support"
+    return support
+
+
+def flag_mixed(
+    labels: pd.Series,
+    support: pd.Series,
+    min_support: float,
+) -> pd.Series:
+    """Suffix `(mixed)` onto labels whose cluster is not internally consistent.
+
+    Takes precedence over `(low confidence)`: a narrow margin says the panel
+    struggled to choose between two identities for one population, whereas low
+    support says the cluster is not one population at all. The second is the more
+    serious problem and the one that changes what should be done about it — a
+    mixed cluster wants re-clustering, not a better panel.
+    """
+    out = {}
+    for idx, label in labels.items():
+        value = support.get(idx, np.nan)
+        stem = label.replace(" (low confidence)", "")
+        out[idx] = f"{stem} (mixed)" if pd.notna(value) and value < min_support else label
+    return pd.Series(out, name="label")
+
+
 def assign_compartments(
     adata: ad.AnnData,
     cfg: Config,
@@ -117,13 +205,15 @@ def assign_compartments(
     panel = load_panel(cfg.compartment_markers)
     scores = score_panel(adata, panel, groupby=groupby, prefix="cscore")
     labels, margins = assign_by_margin(scores, cfg.compartment.min_margin)
+    support = cluster_support(adata, groupby, labels, prefix="cscore")
+    labels = flag_mixed(labels, support, cfg.compartment.min_support)
 
     adata.obs["compartment"] = adata.obs[groupby].map(labels).astype("category")
 
     # Coarse grouping. Fine labels carry the compartment as their prefix, so the
     # mapping is mechanical rather than another hand-curated list to drift.
     def coarse(label: str) -> str:
-        stem = label.replace(" (low confidence)", "")
+        stem = label.replace(" (low confidence)", "").replace(" (mixed)", "")
         if stem.startswith("ocular_"):
             return "ocular"
         if stem in {"neuron_differentiated", "neural_progenitor_radial_glia",
@@ -138,10 +228,13 @@ def assign_compartments(
     evidence = scores.copy()
     evidence["assigned"] = labels
     evidence["margin"] = margins
+    evidence["support"] = support
     evidence["n_cells"] = adata.obs[groupby].value_counts()
     evidence["low_confidence"] = evidence["assigned"].str.contains("low confidence")
+    evidence["mixed"] = evidence["assigned"].str.contains("mixed")
 
     n_low = int(evidence["low_confidence"].sum())
+    n_mixed = int(evidence["mixed"].sum())
     counts = adata.obs["compartment_group"].value_counts().to_dict()
     log.info("  compartment assignment: %s", counts)
     if n_low:
@@ -150,7 +243,15 @@ def assign_compartments(
             "compartment calls as provisional",
             n_low, len(evidence), cfg.compartment.min_margin,
         )
-    return evidence.sort_values("margin")
+    if n_mixed:
+        log.warning(
+            "  %d/%d cluster(s) below %.0f%% internal support — fewer than that "
+            "share of their cells score highest for the label the cluster was "
+            "given. Those clusters are mixtures; re-clustering at a higher "
+            "resolution is the fix, not a different panel.",
+            n_mixed, len(evidence), 100 * cfg.compartment.min_support,
+        )
+    return evidence.sort_values(["support", "margin"])
 
 
 def subset_compartment(
