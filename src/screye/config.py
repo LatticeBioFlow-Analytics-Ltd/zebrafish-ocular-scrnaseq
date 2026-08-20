@@ -120,6 +120,12 @@ class QCConfig:
     min_cells_per_gene: int = 3
     run_doublet_detection: bool = True
     expected_doublet_rate: float = 0.06
+    # Whether the input matrices have had ambient RNA removed upstream. Declared
+    # rather than inferred: this pipeline never derives meaning from a file path,
+    # and the article panels report this value in a supplementary table, so a
+    # wrong guess would be published. `None` reports "not recorded" rather than
+    # asserting either answer.
+    ambient_corrected: bool | None = None
     # Score above which a cell is called a doublet; "auto" uses Scrublet's own
     # threshold. That automatic choice is Otsu's method applied to the
     # simulated-doublet score histogram, which presumes the histogram is

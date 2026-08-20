@@ -51,6 +51,8 @@ qc:
   # value is used here so the corrected and uncorrected runs stay comparable on
   # every axis except the input.
   doublet_threshold: 0.25
+  # These are the uncorrected per-timepoint aggregates.
+  ambient_corrected: false
 
 # Pass 1: whole dissociation.
 cluster:

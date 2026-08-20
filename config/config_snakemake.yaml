@@ -67,6 +67,8 @@ qc:
   # run. The reasoning behind 0.25 and the sensitivity table it was read from
   # are in config_cellbender.yaml.
   doublet_threshold: 0.25
+  # Reads the CellBender tier from the sibling workflow checkout.
+  ambient_corrected: true
 
 # Pass 1: whole dissociation.
 cluster:

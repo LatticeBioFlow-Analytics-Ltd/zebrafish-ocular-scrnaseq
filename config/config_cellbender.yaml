@@ -82,6 +82,11 @@ qc:
   # 16% sensitivity the cells removed are the detectable minority of doublets,
   # not all of them. The true rate is probably near the 6% assumed above.
   doublet_threshold: 0.25
+  # Declared, not inferred. The article panels report this in a supplementary
+  # acceptance-criteria table, and it was previously hardcoded to "not applied",
+  # so an ambient-corrected run published the opposite of the truth. Set it to
+  # match the input tier: true for data/cellbender/, false for the aggregates.
+  ambient_corrected: true
 
 # Pass 1: whole dissociation.
 cluster:

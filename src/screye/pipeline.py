@@ -770,7 +770,8 @@ def _run(cfg: Config, fig_dir: Path) -> ad.AnnData:
             # top-level import would be circular.
             from .article import plot_article_panels
             plot_article_panels(sub, cfg.article_panel, cfg.markers_file,
-                                cfg.outdir / "article")
+                                cfg.outdir / "article",
+                                ambient_corrected=cfg.qc.ambient_corrected)
 
     scores.to_csv(cfg.outdir / "cluster_celltype_scores.csv")
     de.to_csv(cfg.outdir / "cluster_markers_wilcoxon.csv", index=False)

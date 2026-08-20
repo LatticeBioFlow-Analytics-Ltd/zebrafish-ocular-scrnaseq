@@ -308,13 +308,25 @@ def _plot_detection_fractions(table: pd.DataFrame, spec: dict,
     figs.save_figure(fig_dir, "figS3_detection_fractions")
 
 
-def _acceptance_criteria(table: pd.DataFrame, spec: dict) -> pd.DataFrame:
+def _acceptance_criteria(table: pd.DataFrame, spec: dict,
+                         adata: ad.AnnData | None = None,
+                         ambient_corrected: bool | None = None) -> pd.DataFrame:
     """Auto-evaluate the workbook's objective acceptance criteria.
 
     Only the criteria computable from this dataset get a verdict; "comparable"
-    judgements are reported as values for a human to weigh, and the two
-    criteria needing external inputs (ambient correction, second atlas) are
-    marked pending.
+    judgements are reported as values for a human to weigh.
+
+    Every row carries a `note`. Verdicts are kept as the workbook defines them —
+    the workbook is the authority on what the criteria are — but a bare FAIL in
+    a supplementary table is not interpretable on its own, and two of these
+    criteria fail for reasons that are properties of the test rather than of the
+    result. The note is where that is said, so the reader is not left to infer
+    it. Notes are computed, not asserted: the depth figures in criterion 6 come
+    from `adata`.
+
+    `ambient_corrected` is passed in rather than guessed. It was previously a
+    hardcoded "not applied in this run", which meant an ambient-corrected run
+    reported the opposite of the truth in a table intended for a supplement.
     """
     pooled = table[table["stage"] == "pooled"].set_index("gene")
     per_stage = {s: table[table["stage"] == s].set_index("gene")
@@ -329,17 +341,39 @@ def _acceptance_criteria(table: pd.DataFrame, spec: dict) -> pd.DataFrame:
 
     rows = []
     exceeds = {t: pct(pooled, t) > pct(pooled, sentinel) for t in targets}
+    below = [t for t, ok in exceeds.items() if not ok]
+    # The sentinel sets the bar, and rho sets it high: rods express it at
+    # extreme levels, so its ambient floor is elevated in every cluster. A
+    # target can sit below rho and still be unambiguously cell-type restricted,
+    # which is what criterion 3 measures. Say so rather than leave a bare FAIL.
+    ratios = {t: (pct(pooled, t) / pct(pooled, t, "pct_non_rpe"))
+              if pct(pooled, t, "pct_non_rpe") > 0 else float("inf")
+              for t in targets}
+    note1 = (
+        f"{sentinel} is a conservative sentinel: it is expressed at very high "
+        f"level in rods, so its ambient floor is raised in every cluster. "
+        + (f"Below it: {', '.join(below)}. " if below else "")
+        + "Cluster restriction is the more direct test — see criterion 3 "
+          "(enrichment "
+        + "; ".join(f"{t} {ratios[t]:.0f}x" if ratios[t] != float("inf")
+                    else f"{t} undetected outside RPE" for t in targets)
+        + "). Ambient contamination is approximately uniform across cell types "
+          "and cannot produce restriction of this magnitude."
+    )
     rows.append({
         "criterion": f"1. Each target detected in more RPE cells than {sentinel}",
         "value": "; ".join(f"{t} {pct(pooled, t):.1f}% vs {sentinel} "
                            f"{pct(pooled, sentinel):.1f}%" for t in targets),
         "verdict": "pass" if all(exceeds.values()) else "FAIL",
+        "note": note1,
     })
     rows.append({
         "criterion": f"2. Target detection comparable to {matched}",
         "value": "; ".join(f"{t} {pct(pooled, t):.1f}% vs {matched} "
                            f"{pct(pooled, matched):.1f}%" for t in targets),
         "verdict": "review",   # "comparable" is a judgement, not a threshold
+        "note": f"{matched} is the abundance-matched positive control; "
+                "'comparable' is a judgement, so no threshold is applied.",
     })
     enriched = {t: pct(pooled, t) > pct(pooled, t, "pct_non_rpe") for t in targets}
     rows.append({
@@ -347,11 +381,33 @@ def _acceptance_criteria(table: pd.DataFrame, spec: dict) -> pd.DataFrame:
         "value": "; ".join(f"{t} RPE {pct(pooled, t):.1f}% vs other "
                            f"{pct(pooled, t, 'pct_non_rpe'):.1f}%" for t in targets),
         "verdict": "pass" if all(enriched.values()) else "FAIL",
+        "note": "The decisive test for cell-type restriction, and the one "
+                "least sensitive to ambient RNA.",
     })
+    if ambient_corrected is True:
+        amb_value = ("applied: CellBender remove-background, per library, on "
+                     "the raw matrix")
+        amb_verdict, amb_note = "pass", (
+            "Ambient sentinels remain in the panel as a residual-contamination "
+            "readout after correction.")
+    elif ambient_corrected is False:
+        amb_value = "not applied in this run"
+        amb_verdict, amb_note = "FAIL", (
+            "Run the pipeline on the CellBender tier "
+            "(config/config_cellbender.yaml). Until then, read the ambient "
+            "sentinels (rho, gnat2, elavl3) as the contamination readout.")
+    else:
+        amb_value = "not recorded for this run"
+        amb_verdict, amb_note = "pending", (
+            "Whether correction was applied is not recorded in the inputs to "
+            "this panel. Set qc/ambient_corrected in the config, or pass "
+            "--ambient-corrected to screye.article. Not inferred from file "
+            "names: this pipeline never derives meaning from a path.")
     rows.append({
         "criterion": "4. Ambient-RNA correction applied and reported",
-        "value": "not applied in this run; see figS3_notes.txt",
-        "verdict": "pending",
+        "value": amb_value,
+        "verdict": amb_verdict,
+        "note": amb_note,
     })
     sizes = {s: int(f["n_rpe"].max()) for s, f in per_stage.items()}
     rows.append({
@@ -360,11 +416,29 @@ def _acceptance_criteria(table: pd.DataFrame, spec: dict) -> pd.DataFrame:
         "verdict": "pass" if min(sizes.values()) >= 50
                    else "FAIL (a cluster this small cannot support claims "
                         "about low-abundance transcripts)",
+        "note": "Report per-library rather than pooled where possible: cluster "
+                "membership is not evenly distributed across libraries.",
     })
     both = all(
         pct(f, t) > pct(f, sentinel) and pct(f, t) > pct(f, t, "pct_non_rpe")
         for f in per_stage.values() for t in targets
     )
+    # Detection fraction is bounded by sequencing depth, so a stage difference
+    # is only interpretable against the depth of each stage. Measured here
+    # rather than asserted, so the note cannot drift from the data.
+    depth_note = ""
+    if adata is not None and "n_genes_by_counts" in adata.obs:
+        med = (adata.obs.groupby("timepoint", observed=True)["n_genes_by_counts"]
+               .median().sort_index())
+        if len(med) > 1:
+            spread = med.max() / med.min()
+            depth_note = (
+                "Median genes per cell differs between stages ("
+                + ", ".join(f"{s} {v:.0f}" for s, v in med.items())
+                + f", {spread:.2f}x). Detection fraction scales with depth, so "
+                "a difference of this size is not evidence of a developmental "
+                "change; compare after downsampling to the shallower stage."
+            )
     rows.append({
         "criterion": "6. Result reproduces at both stages independently",
         "value": "; ".join(
@@ -374,11 +448,15 @@ def _acceptance_criteria(table: pd.DataFrame, spec: dict) -> pd.DataFrame:
         # fail this criterion, it just cannot address it.
         "verdict": ("pending (single stage in this run)" if len(per_stage) < 2
                     else "pass" if both else "FAIL"),
+        "note": (f"Inherits the {sentinel} comparison from criterion 1. "
+                 + depth_note).strip(),
     })
     rows.append({
         "criterion": "7. Result reproduces in a second public atlas",
         "value": "not evaluated here; see figS3_notes.txt",
         "verdict": "pending",
+        "note": "Candidate atlases named by the control workbook: Daniocell "
+                "(Sur et al. 2023) and Farnsworth et al. 2020.",
     })
     worst = {}
     for g in out_of_tissue:
@@ -389,12 +467,47 @@ def _acceptance_criteria(table: pd.DataFrame, spec: dict) -> pd.DataFrame:
         "criterion": "8. Out-of-tissue controls near zero in every cluster",
         "value": "; ".join(f"{g} max {v:.1f}%" for g, v in worst.items()),
         "verdict": "pass" if all(v < 5 for v in worst.values()) else "review",
+        "note": "Genes with no expected ocular expression; a non-zero value "
+                "here is the floor below which no detection is meaningful.",
     })
     return pd.DataFrame(rows)
 
 
+def _ambient_note(ambient_corrected: bool | None) -> str:
+    """The ambient-correction paragraph for figS3_notes.txt.
+
+    Derived from the recorded value, not hardcoded. The previous fixed string
+    asserted that correction had NOT been applied, so an ambient-corrected run
+    wrote the opposite of the truth into a file destined for a supplement — and
+    it did so in two places, this one and the acceptance-criteria table, which
+    is why both now read from the same argument.
+    """
+    if ambient_corrected is True:
+        return (
+            "Ambient-RNA correction (acceptance criterion 4): APPLIED. Ambient "
+            "RNA was removed per library with CellBender remove-background on "
+            "the raw matrices before this analysis. The ambient sentinels (rho, "
+            "gnat2, elavl3) are retained in the panel as a readout of residual "
+            "contamination after correction.\n\n"
+        )
+    if ambient_corrected is False:
+        return (
+            "Ambient-RNA correction (acceptance criterion 4): NOT applied in "
+            "this run. Re-run against the CellBender tier "
+            "(config/config_cellbender.yaml). Until then, treat the ambient "
+            "sentinels (rho, gnat2, elavl3) as the contamination readout.\n\n"
+        )
+    return (
+        "Ambient-RNA correction (acceptance criterion 4): NOT RECORDED for this "
+        "run. Set qc.ambient_corrected in the config, or pass "
+        "--ambient-corrected / --no-ambient-corrected to screye.article. It is "
+        "deliberately not inferred from the input path.\n\n"
+    )
+
+
 def figs3(adata: ad.AnnData, spec: dict, markers: dict[str, list[str]],
-          fig_dir: Path, table_dir: Path) -> pd.DataFrame:
+          fig_dir: Path, table_dir: Path,
+          ambient_corrected: bool | None = None) -> pd.DataFrame:
     """Supplementary figure S3 and its tables. Returns the detection table."""
     present_markers = {
         name: [g for g in genes if g in adata.raw.var_names]
@@ -411,7 +524,8 @@ def figs3(adata: ad.AnnData, spec: dict, markers: dict[str, list[str]],
     table.to_csv(table_dir / "figS3_detection_fractions.csv", index=False)
     _plot_detection_fractions(table, spec, fig_dir)
 
-    criteria = _acceptance_criteria(table, spec)
+    criteria = _acceptance_criteria(table, spec, adata=adata,
+                                    ambient_corrected=ambient_corrected)
     criteria.to_csv(table_dir / "figS3_acceptance_criteria.csv", index=False)
     n_fail = int(criteria["verdict"].str.startswith("FAIL").sum())
     if n_fail:
@@ -420,13 +534,7 @@ def figs3(adata: ad.AnnData, spec: dict, markers: dict[str, list[str]],
 
     (fig_dir / "figS3_notes.txt").write_text(
         "Fig S3 notes.\n\n"
-        "Ambient-RNA correction (acceptance criterion 4): NOT applied in this "
-        "run. The inputs are the uncorrected per-timepoint aggregates. The "
-        "upstream scRNA_analysis Snakemake workflow publishes per-library "
-        "CellBender-corrected matrices; re-running this pipeline with "
-        "config/config_snakemake.yaml uses those as input, after which every "
-        "panel here is ambient-corrected. Until then, treat the ambient "
-        "sentinels (rho, gnat2, elavl3) as the contamination readout.\n\n"
+        + _ambient_note(ambient_corrected) +
         "Second public atlas (criterion 7): not evaluated in this repository. "
         "Candidates named by the control workbook: Daniocell (Sur et al. "
         "2023) and Farnsworth et al. 2020; check their RPE clusters for the "
@@ -495,7 +603,8 @@ def fill_workbook(table: pd.DataFrame, criteria: pd.DataFrame,
 
 
 def plot_article_panels(adata: ad.AnnData, spec_path: Path,
-                        markers_path: Path, out_dir: Path) -> None:
+                        markers_path: Path, out_dir: Path,
+                        ambient_corrected: bool | None = None) -> None:
     """All article panels into `<out_dir>/figures` + tables into `<out_dir>`."""
     from .cluster import load_markers
 
@@ -505,7 +614,8 @@ def plot_article_panels(adata: ad.AnnData, spec_path: Path,
 
     fig2c(adata, spec, fig_dir)
     fig2d(adata, spec, fig_dir)
-    figs3(adata, spec, load_markers(markers_path), fig_dir, out_dir)
+    figs3(adata, spec, load_markers(markers_path), fig_dir, out_dir,
+          ambient_corrected=ambient_corrected)
     log.info("Article panels written to %s", out_dir)
 
 
@@ -528,6 +638,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="restrict every panel to one timepoint (e.g. "
                              "5dpf); pair it with a distinct --outdir so the "
                              "single-stage set never overwrites the full one")
+    ambient = parser.add_mutually_exclusive_group()
+    ambient.add_argument("--ambient-corrected", dest="ambient_corrected",
+                         action="store_true", default=None,
+                         help="record that the input matrices were "
+                              "ambient-corrected upstream (acceptance "
+                              "criterion 4)")
+    ambient.add_argument("--no-ambient-corrected", dest="ambient_corrected",
+                         action="store_false",
+                         help="record that they were not")
     parser.add_argument("--xlsx", default=None,
                         help="control workbook to fill in (columns H-K and "
                              "the acceptance-criteria sheet); a filled copy "
@@ -557,12 +676,14 @@ def main(argv: list[str] | None = None) -> int:
 
     with headless_plotting():
         plot_article_panels(adata, root / args.panel, root / args.markers,
-                            root / args.outdir)
+                            root / args.outdir,
+                            ambient_corrected=args.ambient_corrected)
 
     if args.xlsx:
         spec = load_panel_spec(root / args.panel)
         table = detection_table(adata, spec)
-        criteria = _acceptance_criteria(table, spec)
+        criteria = _acceptance_criteria(table, spec, adata=adata,
+                                        ambient_corrected=args.ambient_corrected)
         src = Path(args.xlsx).expanduser()
         fill_workbook(table, criteria, src,
                       root / args.outdir / f"{src.stem}_filled.xlsx")
